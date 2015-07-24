@@ -64,11 +64,16 @@ class Workorder:
         else:
             self.status = "UNKNOWN"
 
+    def __repr__(self):
+        """Override how the Workorder is displayed in print"""
+        print "<WO#:%d, status: %s, client: %s>" % (self.wo, self.status, self.client)
+
     def get_dashboard_header(self):
         """
         Build the header row for the dashboard
         :return: list of row headers
         """
+        # TODO: this belongs in the print module, not in the Workorder object...
         headers = []
         headers.append('WO #')
         headers.append('Client')
@@ -94,6 +99,7 @@ class Workorder:
         Build the WO details (content row) for the dashboard
         :return: list of row items
         """
+        # TODO: this belongs in the print module, not in the Workorder object...
         content = []
         content.append(self.wo)
         content.append(self.client)
@@ -148,3 +154,10 @@ def remove_by_attr(wolist, attribute, values):
     :return: list of Workorders that do not match
     """
     return ifilter(lambda x: attrgetter(attribute)(x) not in values, wolist)
+
+
+# experiemental function - for generic operations on a list... this is dark python magic
+# it takes a command in the format of:
+# arg1 = string of: object attribute name operator and value (eg 'wo = 14100')
+# arg2 = the list of objects to have the operator applied to
+ofilter = lambda y,z: ifilter(lambda x: eval('x.'+y), z)
