@@ -3,13 +3,20 @@ Workorder class and utility functions
 """
 __author__ = 'mmcclure'
 
+import openpyxl
+import datetime
+from itertools import ifilter, ifilterfalse
+from operator import attrgetter
+
+
 # TODO: fix the leaky abstracton around the loading of the data
+
 class Workorder:
-    '''
+    """
     Class that hides all the complexity and data of the work order
     Abstracts out the loading interface to the work order data too, so we can change sources with minimal disruption
     Currently takes a list, raw out of the WODataFeed.xlsm and builds the object from that
-    '''
+    """
     def __init__(self, raw):
         self.raw = raw
         self.wo = int(raw[0].value)
@@ -36,8 +43,8 @@ class Workorder:
         self.act['Go Live'] = cell_to_date(raw[33].value)
         self.act['VCS Handoff'] = cell_to_date(raw[34].value)
 
-        #### calculated/derived fields
-        #calculate what stage the project is at based on dates that are filled in
+        # ### calculated/derived fields
+        # calculate what stage the project is at based on dates that are filled in
         if isinstance(self.act['VCS Handoff'], datetime.date):
             self.status = "BAU"
         elif isinstance(self.act['Go Live'], datetime.date):
@@ -58,10 +65,10 @@ class Workorder:
             self.status = "UNKNOWN"
 
     def get_dashboard_header(self):
-        '''
+        """
         Build the header row for the dashboard
         :return: list of row headers
-        '''
+        """
         headers = []
         headers.append('WO #')
         headers.append('Client')
@@ -83,10 +90,10 @@ class Workorder:
         return headers
 
     def get_dashboard_content(self):
-        '''
+        """
         Build the WO details (content row) for the dashboard
         :return: list of row items
-        '''
+        """
         content = []
         content.append(self.wo)
         content.append(self.client)
@@ -106,3 +113,38 @@ class Workorder:
         content.append(self.status)
         content.append(self.stage)
         return content
+
+
+def cell_to_date(date):
+    """
+    Utility function to convert from excel (including empty strings) to an excel ready date
+    :param date: date from an excel spreadsheet
+    :return: the date, in datetime
+    """
+    if isinstance(date, float):
+        return openpyxl.utils.datetime.from_excel(date).date()
+    else:
+        # cell is empty
+        return None
+
+
+def fetch_by_attr(wolist, attribute, values):
+    """
+    Filter a list of Workorder objects, returning only the item whose attribute matches any in the values list
+    :param wolist: list of Workorders to be filtered
+    :param attribute: which Workorder attribute will be used for the filter
+    :param values: list of attribute value will be used for the filter
+    :return: list of Workorders that match
+    """
+    return ifilter(lambda x: attrgetter(attribute)(x) in values, wolist)
+
+
+def remove_by_attr(wolist, attribute, values):
+    """
+    Filter a list of Workorder objects, removing any item whose attribute matches any in the values list
+    :param wolist: list of Workorders to be filtered
+    :param attribute: which Workorder attribute will be used for the filter
+    :param values: list of attribute value will be used for the filter
+    :return: list of Workorders that do not match
+    """
+    return ifilter(lambda x: attrgetter(attribute)(x) not in values, wolist)

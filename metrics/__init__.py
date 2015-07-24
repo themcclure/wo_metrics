@@ -11,8 +11,6 @@ __author__ = 'mmcclure'
 
 __all__ = ['Workorder']
 
-from metrics.workorder import Workorder
+# from workorder import Workorder
 
 # TODO: rework this if this whole package is going to be run from the command line... probably best done as a non-package script
-if __name__ == '__main__':
-    print "why are you running this?"

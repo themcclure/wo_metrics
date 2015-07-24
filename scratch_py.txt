@@ -1,0 +1,575 @@
+This is the old code, moved over here in a scratch file for ease of remote access
+
+
+"""
+Reads th WODataFeed and processes the results into complex data queries, and puts the results into a spreadsheet
+"""
+__author__ = 'mmcclure'
+__version__ = '0.1'
+
+import xlrd
+import openpyxl
+import datetime
+import sys
+import getopt
+
+# TODO: library consolidation. started with xlrd but looks like I need more to write files
+# TODO: expand it to show "current state"
+# TODO: expand it to show one tab per open project, with a summary of the project on that tab
+# TODO: expand it to have colours
+# TODO: expand it to have graphs
+
+'''
+WODataFeed format:
+MasterWONumber
+Estimated PM Hours
+Estimated ID Hours
+Estimated Dev Hours
+Estimated QA Hours
+Estimated Contingency Hours
+total estimated hours
+Actual PM Hours
+Actual ID Hours
+Actual Arch Hours
+Actual Dev Hours
+Actual QA Hours
+Actual NONE Hours
+Act Total Hours
+PM ActvsEst
+ID ActvsEst
+Dev ActvsEst
+QA ActvsEst
+Act vs Est
+simple project type
+detailed project type
+Estimated App Type Parent
+Estimated App Type Category
+EstimateCompleteDate
+SignedDate
+ApprovalDate
+WO Approved (Signature)
+PM Assigned Date
+Kickoff with Client
+Spec Signoff
+Dev Kickoff
+QA Kickoff
+QA Complete
+Go Live
+Handoff to VCS
+Has Gone Live
+Go Live Year
+Go Live quarter
+Go Live Month
+days from est comp to client sig
+days from est comp to FF WO Approved
+days from est comp to pm assigned
+days from pm assigned to client KO
+days from client KO to GL
+days from PM Assigned to go live
+has a negative duration?
+1 Project Control & Overhead
+2 Scoping/ Requirements/ Design
+2a Interaction Design
+3 Implementation
+3a Dev - Infrastructure
+3b Dev - Data Integration
+3c Dev - Interaction Configuration
+3d Dev - Interaction Business Logic
+3e Dev - Interaction Messaging
+3f Dev - Interaction Strategy
+3g Dev - Analytics & Reporting
+4 Validation
+4a QA - Infrastructure
+4b QA - Data Integration
+4c QA - Interaction Configuration
+4d QA - Interaction Business Logic
+4e QA - Interaction Messaging
+4f QA - Interaction Strategy
+4g QA - Analytics & Reporting
+4h Application Verification (Including UAT)
+5 Deploy & Go Live Support
+NONE
+Stage
+Go Live Year and Qtr
+Is Low Risk Change?
+Number Of CRs
+Is Time and Materials?
+days from FF WO Approved to pm assigned
+days from client KO to spec signoff
+days from spec signoff to dev kickoff
+days from dev kickoff to QA kickoff
+days from QA kickoff to QA comp
+days from QA comp to Go Live
+days from Go Live to VCS handoff
+Go Live Year (Fiscal)
+Go Live Qtr (Fiscal)
+Go Live Year and Qtr (Fiscal)
+SLX_CustomerName
+WorkOrderName
+Should Exclude from Reports	% of hours with no milestone
+Has enough hours in milestones
+Est. Go Live Date
+Project Status Notes
+Original GoLive Date
+Has been reviewed?
+Project Type Mismatch?
+Est. Prompt Request Date
+Est. Dev Start Date
+Est. QA Start Date
+Est. Handoff to VCS Date
+Project Manager
+Most recent timecard date
+Estimate Complexity
+WO Active (in FF)
+'''
+
+# ### CONFIG
+# small, local test file - minus all the tabs and macros
+test_datafeed = 'WODataFeedTest.xlsm'
+# Full, live file
+datafeed = '//pons/DavWWWRoot/comm/services/Services Collaboration/WODataFeed.xlsm'
+
+
+# load the named spreadsheet from file, returns the relevant worksheet
+def load_spreadsheet(datafeed):
+    # open the workbook
+    wb = xlrd.open_workbook(datafeed)
+    # return the summary sheet
+    return wb.sheet_by_name('WO Rollup Info')
+
+
+# utility function to convert from excel (including empty strings) to an excel ready date
+def cell_to_date(date):
+    if isinstance(date, float):
+        return openpyxl.utils.datetime.from_excel(date).date()
+    else:
+        # cell is empty
+        return None
+
+
+class Workorder:
+    """
+    Class that hides all the complexity and data of the work order
+    Abstracts out the loading interface to the work order data too, so we can change sources with minimal disruption
+    Currently takes a list, raw out of the WODataFeed.xlsm and builds the object from that
+    """
+    def __init__(self, raw):
+        """
+
+        :type self: Workorder
+        """
+        self.raw = raw
+        self.wo = int(raw[0].value)
+        self.wo_link = 'http://pons/wo/Pages/WorkOrder.aspx?WO=' + str(self.wo)
+        self.name = raw[84].value
+        self.client = raw[83].value
+        self.type = raw[20].value
+        self.PM = raw[97].value
+        self.stage = raw[68].value
+        self.is_active = bool(raw[100].value)
+        # values related to the estimate
+        self.est = {}
+        self.est['Complexity'] = raw[99].value
+        self.est['Total Hours'] = float(raw[6].value)
+        # values related to the actuals from FF
+        self.act = {}
+        self.act['Total Hours'] = float(raw[13].value)
+        self.act['Estimate Complete'] = cell_to_date(raw[23].value)
+        self.act['WO Signed'] = cell_to_date(raw[26].value)
+        self.act['Client KO'] = cell_to_date(raw[28].value)
+        self.act['Dev KO'] = cell_to_date(raw[30].value)
+        self.act['QA KO'] = cell_to_date(raw[31].value)
+        self.act['QA Complete'] = cell_to_date(raw[32].value)
+        self.act['Go Live'] = cell_to_date(raw[33].value)
+        self.act['VCS Handoff'] = cell_to_date(raw[34].value)
+
+        #### calculated/derived fields
+        #calculate what stage the project is at based on dates that are filled in
+        if isinstance(self.act['VCS Handoff'], datetime.date):
+            self.status = "BAU"
+        elif isinstance(self.act['Go Live'], datetime.date):
+            self.status = "Live"
+        elif isinstance(self.act['QA Complete'], datetime.date):
+            self.status = "QA Complete"
+        elif isinstance(self.act['QA KO'], datetime.date):
+            self.status = "QA Kickoff"
+        elif isinstance(self.act['Dev KO'], datetime.date):
+            self.status = "Dev Kickoff"
+        elif isinstance(self.act['Client KO'], datetime.date):
+            self.status = "Client Kickoff"
+        elif isinstance(self.act['WO Signed'], datetime.date):
+            self.status = "Signed"
+        elif isinstance(self.act['Estimate Complete'], datetime.date):
+            self.status = "Estimated"
+        else:
+            self.status = "UNKNOWN"
+
+    def get_dashboard_header(self):
+        """
+        Build the header row for the dashboard
+        :return: list of row headers
+        """
+        headers = []
+        headers.append('WO #')
+        headers.append('Client')
+        headers.append('WO Name')
+        headers.append('PM')
+        headers.append('Project Type')
+        headers.append('Estimated Hours')
+        headers.append('Actual Hours')
+        headers.append('Estimated Date')
+        headers.append('Signed Date')
+        headers.append('Client Kickoff')
+        headers.append('Dev Kickoff')
+        headers.append('QA Kickoff')
+        headers.append('QA Complete')
+        headers.append('Go Live Date')
+        headers.append('VCS Handoff Date')
+        headers.append('WO Status')
+        headers.append('Project Stage')
+        return headers
+
+    def get_dashboard_content(self):
+        """
+        Build the WO details (content row) for the dashboard
+        :return: list of row items
+        """
+        content = []
+        content.append(self.wo)
+        content.append(self.client)
+        content.append(self.name)
+        content.append(self.PM)
+        content.append(self.type)
+        content.append(self.est['Total Hours'])
+        content.append(self.act['Total Hours'])
+        content.append(self.act['Estimate Complete'])
+        content.append(self.act['WO Signed'])
+        content.append(self.act['Client KO'])
+        content.append(self.act['Dev KO'])
+        content.append(self.act['QA KO'])
+        content.append(self.act['QA Complete'])
+        content.append(self.act['Go Live'])
+        content.append(self.act['VCS Handoff'])
+        content.append(self.status)
+        content.append(self.stage)
+        return content
+
+
+def load_all_projects(sheet_name):
+    """
+    Given the file name of a spreadsheet (WODataFeed format), it will load the spreadsheet and return a list of Workorder objects
+    :param sheet_name: file name pointing to a version of WODataFeed.xlsm
+    :return: list of Workorders
+    """
+    wolist = []
+    sheet = load_spreadsheet(sheet_name)
+
+    # process each row (work order) in the sheet
+    for x in range(1, sheet.nrows):
+        # build the list of objects to return
+        wolist.append(Workorder(sheet.row(x)))
+    return wolist
+
+
+def find_wo_in_list(wonum, objlist):
+    """
+    Find a work order out of the set of them, and prints it out
+    (This is mostly used for debugging)
+    :param wonum: Work Order Number
+    :param objlist: list of Workorder objects
+    :return: the Workorder, if found otherwise None
+    """
+    for obj in objlist:
+            if obj.wo == wonum:
+                print obj
+
+def get_all_projects(sheet):
+    """Process the worksheet supplied, returning a list of work orders found
+    :param sheet: Excel worksheet called "WO Rollup Info"
+    :return: list of work orders
+    """
+
+    count = 0
+    openwos = 0
+    open_work = []
+    wolist = []
+
+    # add the header row
+    open_work.append(['WO #', 'Client', 'WO Name', 'PM', 'Project Type', 'Estimated Hours', 'Actual Hours', 'Estimated Date', 'Signed Date',
+                      'Client Kickoff', 'Dev Kickoff', 'QA Kickoff', 'QA Complete', 'Go Live Date', 'VCS Handoff Date', 'WO Status',
+                      'WO SIGNED', 'WO DONE'])
+
+    # process each row (work order) in the sheet
+    for x in range(1, sheet.nrows):
+        # WO Numner
+        wonum = int(sheet.row(x)[0].value)
+
+        # Estimated: Total Hours
+        woestimate = int(sheet.row(x)[6].value)
+
+        # Actual: Total Hours
+        woactual = int(sheet.row(x)[13].value)
+
+        # Is it done (in FF)
+        # TODO if it's oly got VCS handoff, then it's also done - is here the place to fix that, or in WODATA?
+        wodone = bool(sheet.row(x)[35].value)
+
+        # Date Milestone: Estimate Complete
+        woestimatedate = cell_to_date(sheet.row(x)[23].value)
+
+        # Date Milestone: Estimate Signed
+        # WO signed date I think - but this brings in lots of signed things that weren't in FF
+        #wosigneddate = cell_to_date(sheet.row(x)[24].value)
+        # WO Approval (signed) date I think this is the FF data
+        wosigneddate = cell_to_date(sheet.row(x)[26].value)
+
+        # Is it signed?
+        wosigned = bool(wosigneddate != None)
+
+        # Date Milestone: Kickoff with client
+        wokickoffdate = cell_to_date(sheet.row(x)[28].value)
+
+        # Date Milestone: Kickoff with Dev
+        wodevkickoffdate = cell_to_date(sheet.row(x)[30].value)
+
+        # Date Milestone: Kickoff with QA
+        woqakickoffdate = cell_to_date(sheet.row(x)[31].value)
+
+        # Date Milestone: QA Complete
+        woqacompletedate = cell_to_date(sheet.row(x)[32].value)
+
+        # Date Milestone: Go Live
+        wogolivedate = cell_to_date(sheet.row(x)[33].value)
+
+        # Date Milestone: VCS Handoff
+        wovcsdate = cell_to_date(sheet.row(x)[34].value)
+
+        # Client
+        woclient = sheet.row(x)[83].value
+
+        # WO Type
+        wotype = sheet.row(x)[20].value
+
+        # WO Name
+        woname = sheet.row(x)[84].value
+
+        # WO Stage
+        wostage = sheet.row(x)[68].value
+
+        # Assigned PM
+        wopm = sheet.row(x)[97].value
+
+        # Estimate Complexity
+        # TODO: Estimate complexity isn't in the WODataFeed!!
+        wocomplex = None
+
+        # ### calculated/derived fields
+        # calculate what stage the project is at based on dates that are filled in
+        if isinstance(wovcsdate, datetime.date):
+            wostatus = "BAU"
+        elif isinstance(wogolivedate, datetime.date):
+            wostatus = "Live"
+        elif isinstance(woqacompletedate, datetime.date):
+            wostatus = "QA Complete"
+        elif isinstance(woqakickoffdate, datetime.date):
+            wostatus = "QA Kickoff"
+        elif isinstance(wodevkickoffdate, datetime.date):
+            wostatus = "Dev Kickoff"
+        elif isinstance(wokickoffdate, datetime.date):
+            wostatus = "Client Kickoff"
+        elif isinstance(wosigneddate, datetime.date):
+            wostatus = "Signed"
+        elif isinstance(woestimatedate, datetime.date):
+            wostatus = "Estimated"
+        else:
+            wostatus = "UNKNOWN"
+
+        # build the list of objects before any of the list based filtering occurs
+        wolist.append(Workorder(sheet.row(x)))
+
+        # filter out reocords that aren't considered "open"
+        if wotype == 'On-Demand Services' or wostatus == 'BAU' or wostatus == 'UNKNOWN' or not wopm\
+                or wocomplex == 'Ballpark':
+            continue
+
+        if wopm:
+            #print wopm
+            pass
+        else:
+            print "not string"
+
+        count += 1
+
+        open_work.append([wonum, woclient, woname, wopm, wotype, woestimate, woactual, woestimatedate, wosigneddate, wokickoffdate,
+                          wodevkickoffdate, woqakickoffdate, woqacompletedate, wogolivedate, wovcsdate, wostatus,
+                          wosigned, wodone])
+
+    print "list %d, obj %d" % (open_work.__len__(), wolist.__len__())
+    return open_work,wolist
+
+
+def filter_list_by(wlist, filter_type, filter_list=[]):
+    """
+    Filter out all the work orders than match the supplied list of values for the filter type
+    :param wlist: list of Workorders
+    :param filter_type: type of filter to be used
+    :param filter_list: list of Workorder values to be filtered
+    :return: list of Workorders, minus those that match the filter
+    """
+    filter_type = filter_type.lower()
+    flist = []
+    for l in wlist:
+        # skip over all statuses that are before WO is estimated
+        if filter_type == 'status' and l.status in filter_list:
+            pass
+        elif filter_type == 'complexity' and l.est['Complexity'] in filter_list:
+            pass
+        elif filter_type == 'type' and l.type in filter_list:
+            pass
+        elif filter_type == 'manager' and l.PM in filter_list:
+            pass
+        elif filter_type == 'stage' and l.stage in filter_list:
+            pass
+        elif filter_type == 'active' and l.is_active in filter_list:
+            pass
+        else:
+            flist.append(l)
+    return flist
+
+
+def query_list_by(wlist, filter_type, filter_list=[]):
+    """
+    Query the supplied list Workorders and return those that match the values for the filter type
+    :param wlist: list of Workorders
+    :param filter_type: type of filter to be used
+    :param filter_list: list of Workorder values to be returned
+    :return: list of matching Workorders
+    """
+    filter_type = filter_type.lower()
+    flist = []
+    for l in wlist:
+        # match where a filter value is found
+        if filter_type == 'status' and l.status in filter_list:
+            flist.append(l)
+        elif filter_type == 'complexity' and l.est['Complexity'] in filter_list:
+            flist.append(l)
+        elif filter_type == 'type' and l.type in filter_list:
+            flist.append(l)
+        elif filter_type == 'manager' and l.PM in filter_list:
+            flist.append(l)
+        elif filter_type == 'stage' and l.stage in filter_list:
+            flist.append(l)
+        elif filter_type == 'active' and l.is_active in filter_list:
+            flist.append(l)
+        else:
+            pass
+    return flist
+
+
+def create_dashboard(wlist):
+    """
+    Create an excel dashboard from a list of objects
+    :param wlist: list of Workorder objects to be processed into the dashboard
+    """
+    wb = openpyxl.Workbook()
+    page = wb.active
+    page.title = 'Dashboard'
+    # TODO add in other tabs per project
+    # TODO change WO # to be a URL
+    # TODO formatting
+    # TODO names ranges, so this can just feed in the raw data, and charts & pivots can be done off that?
+
+    # populate dashboard tab with a header
+    wb['Dashboard'].append(wlist[0].get_dashboard_header())
+    # populate dashboard tab with each WO
+    counter = 2 #offset to find the first cell with a WO in it "A2"
+    for row in wlist:
+        # add the meat
+        wb['Dashboard'].append(row.get_dashboard_content())
+        # convert the WO number into a link
+        wb['Dashboard'].cell('A' + str(counter)).hyperlink = row.wo_link
+        counter += 1
+
+    # add in autofilter, automatically determining the last column to use
+    wb['Dashboard'].auto_filter.ref = 'A1:' + chr(ord('A') -1 + len(wlist[0].get_dashboard_header())) + '1'
+    print wb['Dashboard'].auto_filter.ref
+    wb['Dashboard'].auto_filter.add_sort_condition('D1:D1')
+
+    # commit sheet to file, beware - this silently overwrites!
+    wb.save('WO Dashboard.xlsx')
+
+
+def merge_wolists(wo_lists):
+    """
+    Merges two lists of WOs, ensuring WOs are unique in the list
+    :param wo_lists: list of lists of Workorders
+    :return: list of Workorders
+    """
+    tmp_list = wo_lists[0]
+    for wo_list in wo_lists[1:]:
+        for l in wo_list:
+            if l not in tmp_list:
+                tmp_list.append(l)
+    return tmp_list
+
+
+def generate_dashboard_report(master_objlist):
+    """
+    generates the dashboard report
+    :param master_objlist: the list of all projects
+    :return: None
+    """
+    print 'Raw: %d' % len(master_objlist)
+    # filter out the work orders that have been handed off to VCS or that haven't been estimated yet
+    objlist = filter_list_by(master_objlist, 'status', ['BAU', 'UNKNOWN'])
+    print 'After WO Status filter: %d' % len(objlist)
+    # remove the ballparks ... if oen is ever signed, it should be changed to a different WO Type
+    objlist = filter_list_by(objlist, 'complexity', ['Ballpark'])
+    print 'After Ballpark filter: %d' % len(objlist)
+    # On Demand Services work isn't ever sent to VCS like the rest, so they don't count as an open project
+    objlist = filter_list_by(objlist, 'type', ['On-Demand Services'])
+    print 'After On-Demand Services filter: %d' % len(objlist)
+    # filter out projects listed as completed in FF
+    objlist = filter_list_by(objlist, 'stage', ['Completed'])
+    print 'After Project Completed filter: %d' % len(objlist)
+    # filter out projects listed as inactive in FF
+    objlist = filter_list_by(objlist, 'active', [False])
+    print 'After Inactive filter: %d' % len(objlist)
+    # filter out projects run by non standard projects managers (including nobody assigned)
+    # objlist = filter_list_by(objlist, 'manager', [None, '', 'Kim Saurer', 'Michael Ho', 'Bryan Richardson', 'Ken Malenke','Hank Koerner','Lynn Bancroft'])
+    objlist = filter_list_by(objlist, 'manager', [''])
+    print 'After PM filter: %d' % len(objlist)
+    # query the projects listed as 'At Risk' in FF
+    white_objlist = query_list_by(master_objlist, 'stage', ['At Risk'])
+    print 'Num At Risk: %d' % len(white_objlist)
+    # merge the whitelist and the filtered list (removing duplicates)
+    objlist = merge_wolists([objlist, white_objlist])
+    print 'After merge: %d' % len(objlist)
+    create_dashboard(objlist)
+
+
+# invoke all the reports, if run from the command line
+if __name__ == '__main__':
+    # parse command line arguments
+    helpmsg = '-t'
+    try:
+        opts, args = getopt.getopt(sys.argv[1:],'t')
+    except getopt.GetoptError:
+        print helpmsg
+        sys.exit(2)
+    for opt,arg in opts:
+        if opt == '-t':
+            # use the test doc, if the command line args say it's a test
+            datafeed = test_datafeed
+            print "TEST DATA"
+
+    start_time = datetime.datetime.now()
+
+    # load all the projects
+    master_objlist = load_all_projects(datafeed)
+
+    # build the dashboard report
+    generate_dashboard_report(master_objlist)
+
+    end_time = datetime.datetime.now()
+    print 'Exec time: %i s' % (end_time - start_time).seconds
