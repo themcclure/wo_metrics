@@ -9,7 +9,7 @@ from itertools import ifilter, ifilterfalse
 from operator import attrgetter
 
 
-# TODO: fix the leaky abstracton around the loading of the data
+# TODO: fix the leaky abstracton around the loading of the data having to know the structure of the WODataFeed rows
 
 class Workorder:
     """
@@ -66,7 +66,7 @@ class Workorder:
 
     def __repr__(self):
         """Override how the Workorder is displayed in print"""
-        print "<WO#:%d, status: %s, client: %s>" % (self.wo, self.status, self.client)
+        return "<WO#:%d, status: %s, client: %s>" % (self.wo, self.status, self.client)
 
     def get_dashboard_header(self):
         """
