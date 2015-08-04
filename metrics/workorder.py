@@ -156,6 +156,20 @@ def remove_by_attr(wolist, attribute, values):
     return ifilter(lambda x: attrgetter(attribute)(x) not in values, wolist)
 
 
+def merge_wolists(wo_lists):
+    """
+    Merges two lists of WOs, ensuring WOs are unique in the list
+    :param wo_lists: list of lists of Workorders
+    :return: list of Workorders
+    """
+    tmp_list = wo_lists[0]
+    for wo_list in wo_lists[1:]:
+        for l in wo_list:
+            if l not in tmp_list:
+                tmp_list.append(l)
+    return tmp_list
+
+
 # experiemental function - for generic operations on a list... this is dark python magic
 # it takes a command in the format of:
 # arg1 = string of: object attribute name operator and value (eg 'wo = 14100')

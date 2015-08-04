@@ -9,12 +9,8 @@ __author__ = 'mmcclure'
 
 import xlrd
 from workorder import Workorder
-
-# ### CONFIG
-# small, local test file - minus all the tabs and macros
-test_datafeed = 'WODataFeedTest.xlsm'
-# Full, live file
-datafeed = '//pons/DavWWWRoot/comm/services/Services Collaboration/WODataFeed.xlsm'
+import metrics.config
+datafeed = metrics.config.datafeed
 
 
 def load_from_spreadsheet(datafeed):
@@ -34,11 +30,14 @@ def load_from_spreadsheet(datafeed):
     return wolist
 
 
+# TODO: add in a set of default filtered lists of Workorders, such as "Open", "Estimated", "Completed", etc. this way people use the same data sets more readily
+
+
 if __name__ == '__main__':
     """if this module is run, assume that the user just wants to load the data from a file
     """
     print 'loading the WODataFeed...'
-    wolist = load_from_spreadsheet(test_datafeed)
+    wolist = load_from_spreadsheet(metrics.config.test_datafeed)
     print 'Found %d records' % len(wolist)
 
 

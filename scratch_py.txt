@@ -523,7 +523,7 @@ def generate_dashboard_report(master_objlist):
     # filter out the work orders that have been handed off to VCS or that haven't been estimated yet
     objlist = filter_list_by(master_objlist, 'status', ['BAU', 'UNKNOWN'])
     print 'After WO Status filter: %d' % len(objlist)
-    # remove the ballparks ... if oen is ever signed, it should be changed to a different WO Type
+    # remove the ballparks ... if one is ever signed, it should be changed to a different WO Type
     objlist = filter_list_by(objlist, 'complexity', ['Ballpark'])
     print 'After Ballpark filter: %d' % len(objlist)
     # On Demand Services work isn't ever sent to VCS like the rest, so they don't count as an open project
