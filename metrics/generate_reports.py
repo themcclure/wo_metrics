@@ -11,6 +11,7 @@ __author__ = 'mmcclure'
 
 import openpyxl
 from load_data import load_from_spreadsheet
+# from workorder import
 import metrics.config
 datafeed = metrics.config.datafeed
 
@@ -56,18 +57,18 @@ def build_flow_report(wlist):
     :param wlist: list of Workorder objects to be processed into the report
     """
     print "starting flow report, unfiltered list contains %d work orders" % len(wlist)
-    tmp_list = []
+    # query all the work orders that have been estimated (or beyond)
+    tmp_list = list(metrics.workorder.remove_by_attr(wlist, 'status', ['UNKNOWN']))
     print "finished flow report, final list contains %d work orders" % len(tmp_list)
 
 
 if __name__ == '__main__':
     """if this module is run, assume that the user just wants to load the data from a file
     """
-    print 'loading the WODataFeed...'
-    print 'Found %d records' % len(wolist)
-
     # load the list of work orders
+    print 'loading the WODataFeed...'
     wolist = load_from_spreadsheet(metrics.config.test_datafeed)
+    print 'Found %d records' % len(wolist)
 
     # build the flow report
     build_flow_report(wolist)

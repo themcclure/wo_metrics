@@ -11,6 +11,8 @@ __author__ = 'mmcclure'
 
 #__all__ = ['Workorder']
 
-# from workorder import Workorder
+from workorder import Workorder
+from load_data import load_from_spreadsheet
+from generate_reports import build_flow_report
 
 # TODO: rework this if this whole package is going to be run from the command line... probably best done as a non-package script
